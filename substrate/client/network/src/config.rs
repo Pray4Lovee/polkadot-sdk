@@ -66,6 +66,7 @@ use std::{
 	pin::Pin,
 	str::{self, FromStr},
 	sync::Arc,
+	time::Duration,
 };
 
 /// Protocol name prefix, transmitted on the wire for legacy protocol names.
@@ -620,6 +621,11 @@ pub struct NetworkConfiguration {
 	/// Configuration for the transport layer.
 	pub transport: TransportConfig,
 
+	/// Idle connection timeout.
+	///
+	/// Set by default to [`DEFAULT_IDLE_CONNECTION_TIMEOUT`].
+	pub idle_connection_timeout: Duration,
+
 	/// Maximum number of peers to ask the same blocks in parallel.
 	pub max_parallel_downloads: u32,
 
@@ -677,6 +683,7 @@ impl NetworkConfiguration {
 			client_version: client_version.into(),
 			node_name: node_name.into(),
 			transport: TransportConfig::Normal { enable_mdns: false, allow_private_ip: true },
+			idle_connection_timeout: DEFAULT_IDLE_CONNECTION_TIMEOUT,
 			max_parallel_downloads: 5,
 			max_blocks_per_request: 64,
 			min_peers_to_start_warp_sync: None,
