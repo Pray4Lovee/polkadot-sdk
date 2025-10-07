@@ -134,8 +134,12 @@ parameter_types! {
 			epoch: 0,
 		},
 		electra: Fork {
-			version: [5, 0, 0, 0], // 0x05000000
-			epoch: 80000000000,
+			version: hex!("05000000"),
+			epoch: 0,
+		},
+		fulu: Fork {
+			version: hex!("06000000"),
+			epoch: 100000000,
 		}
 	};
 }
