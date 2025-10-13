@@ -270,46 +270,8 @@ parameter_types! {
 		},
 		electra: Fork {
 			version: hex!("90000074"),
-			epoch: 222464,
+			epoch: 222464, // https://github.com/ethereum/EIPs/pull/9322/files
 		},
-		fulu: Fork {
-			version: hex!("90000075"),
-			epoch: 272640, // https://notes.ethereum.org/@bbusa/fusaka-bpo-timeline
-		},
-	};
-}
-
-#[cfg(any(feature = "std", feature = "fast-runtime", feature = "runtime-benchmarks", test))]
-parameter_types! {
-	pub const ChainForkVersions: ForkVersions = ForkVersions {
-		genesis: Fork {
-			version: hex!("00000000"),
-			epoch: 0,
-		},
-		altair: Fork {
-			version: hex!("01000000"),
-			epoch: 0,
-		},
-		bellatrix: Fork {
-			version: hex!("02000000"),
-			epoch: 0,
-		},
-		capella: Fork {
-			version: hex!("03000000"),
-			epoch: 0,
-		},
-		deneb: Fork {
-			version: hex!("04000000"),
-			epoch: 0,
-		},
-		electra: Fork {
-			version: hex!("05000000"),
-			epoch: 0,
-		},
-		fulu: Fork {
-			version: hex!("06000000"),
-			epoch: 5000000,
-		}
 	};
 }
 
