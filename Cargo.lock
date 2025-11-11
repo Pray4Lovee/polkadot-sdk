@@ -9955,8 +9955,7 @@ checksum = "4ee93343901ab17bd981295f2cf0026d4ad018c7c31ba84549a4ddbb47a45104"
 [[package]]
 name = "litep2p"
 version = "0.11.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fb01eefca5df3c7166b18e97a87d9869fdfb105b8b3c6d894183489c8d6ce257"
+source = "git+https://github.com/moondance-labs/litep2p?branch=girazoki-simple-dns-update-2#db08ad8204dc442c320ca4388c24d0f6bafdcd46"
 dependencies = [
  "async-trait",
  "bs58",
@@ -21711,9 +21710,9 @@ dependencies = [
 
 [[package]]
 name = "simple-dns"
-version = "0.9.3"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dee851d0e5e7af3721faea1843e8015e820a234f81fda3dea9247e15bac9a86a"
+checksum = "f8cba3b4c122239e3b4473674cb7c79ad2693f008f0746bfe2fc3fe1ffcd936a"
 dependencies = [
  "bitflags 2.6.0",
 ]
