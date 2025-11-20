@@ -22,7 +22,7 @@ jobs:
     uses: ./.github/workflows/release-reusable-publish-packages.yml
     with:
       tag: ${{ inputs.tag }}
-      distribution: ${{ inputs.distribution }}
+      distribution: release # RPM packages are always published to 'release' distribution - we are not using multiple distributions for RPM
       package_type: 'rpm'
       aws_repo_base_path: "s3://releases-package-repos"
       cloudfront_distribution_id: "E36FKEYWDXAZYJ"
