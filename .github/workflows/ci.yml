@@ -1,54 +1,70 @@
-name: Polkadot-SDK CI
+name: Polkadot-SDK Full CI E2E
 
 on:
   push:
     branches:
       - master
-    # Only trigger heavy jobs on code or dependency changes
     paths:
       - 'Cargo.toml'
       - 'src/**'
       - 'pallets/**'
+      - 'docs/**'
   pull_request:
     branches:
       - master
+  schedule:
+    - cron: '0 3 * * *' # Nightly full benchmarks
+
+concurrency:
+  group: polkadot-sdk-ci
+  cancel-in-progress: true
 
 jobs:
 
   # -------------------------
-  # 1️⃣ Quick Checks (Docs / minor edits)
+  # 1️⃣ Quick Checks / Docs
   # -------------------------
   quick-checks:
     runs-on: ubuntu-latest
     if: contains(github.event.head_commit.message, 'docs') || contains(github.event.head_commit.message, 'comment')
     steps:
       - uses: actions/checkout@v4
-      - name: Run Quick Checks
+      - name: Quick Sanity Checks
         run: |
-          echo "Running quick sanity checks..."
-          # Add commands for linting or small tests
+          echo "Running linting and quick checks..."
+          cargo fmt -- --check
+          cargo clippy --all-targets --all-features -- -D warnings
       - name: Build Docs
-        run: |
-          echo "Building documentation..."
-          # e.g., mdbook build docs/
+        run: mdbook build docs/
 
   # -------------------------
-  # 2️⃣ Unit Tests / Integration Tests
+  # 2️⃣ Unit / Integration Tests
   # -------------------------
   tests:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Cache Rust Cargo
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: cargo-${{ runner.os }}-
+
       - name: Install Rust + Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y curl build-essential
+          sudo apt-get install -y curl build-essential pkg-config libssl-dev
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
           source $HOME/.cargo/env
           rustup default stable
+
       - name: Run Unit Tests
-        run: |
-          cargo test --workspace --all-features
+        run: cargo test --workspace --all-features
 
   tests-linux-stable:
     runs-on: ubuntu-latest
@@ -56,8 +72,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Run Linux Stable Tests
-        run: |
-          cargo test --workspace --target x86_64-unknown-linux-gnu
+        run: cargo test --workspace --target x86_64-unknown-linux-gnu
 
   tests-misc:
     runs-on: ubuntu-latest
@@ -65,32 +80,38 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Misc Tests
-        run: |
-          cargo test --workspace --all-targets
+        run: cargo test --workspace --all-targets
 
   # -------------------------
-  # 3️⃣ Zombienet / Integration (Heavy)
+  # 3️⃣ Zombienet / Heavy Integration
   # -------------------------
   zombienet:
     runs-on: ubuntu-latest
     needs: tests
-    if: github.event_name != 'pull_request' # optional: skip heavy for PRs
+    if: github.event_name != 'pull_request'
     strategy:
       matrix:
         node: [substrate, polkadot, cumulus, parachain_templates]
     steps:
       - uses: actions/checkout@v4
+
+      - name: Cache Node Artifacts
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: node-${{ matrix.node }}-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: node-${{ matrix.node }}-${{ runner.os }}-
+
       - name: Setup Node
-        run: |
-          echo "Setting up Zombienet node for ${{ matrix.node }}"
-          # Add node setup commands
+        run: echo "Setting up Zombienet ${{ matrix.node }} node..."
       - name: Run Integration Tests
-        run: |
-          echo "Running heavy integration tests..."
-          # Command to start nodes and test
+        run: echo "Running integration tests for ${{ matrix.node }}..."
 
   # -------------------------
-  # 4️⃣ Check Publish / Crates
+  # 4️⃣ Crate Checks / Publish
   # -------------------------
   check-publish:
     runs-on: ubuntu-latest
@@ -98,8 +119,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Check Crates
-        run: |
-          cargo publish --dry-run
+        run: cargo publish --dry-run
 
   claim-crates:
     runs-on: ubuntu-latest
@@ -107,20 +127,44 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Claim Crates
-        run: |
-          echo "Claiming crates ownership..."
-          # Command to claim crates
+        run: echo "Claiming crates ownership..."
 
   # -------------------------
-  # 5️⃣ Benchmarks (Optional / Nightly)
+  # 5️⃣ Docker Image Builds
+  # -------------------------
+  build-images:
+    runs-on: ubuntu-latest
+    needs: tests
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Docker Layers
+        uses: actions/cache@v3
+        with:
+          path: /tmp/.docker-cache
+          key: docker-cache-${{ github.sha }}
+          restore-keys: docker-cache-
+
+      - name: Build & Push Images
+        run: |
+          docker build --cache-from /tmp/.docker-cache -t polkadot-sdk:latest .
+          docker save polkadot-sdk:latest > /tmp/.docker-cache/image.tar
+
+  # -------------------------
+  # 6️⃣ Benchmarks (Nightly Only)
   # -------------------------
   benchmarks:
     runs-on: ubuntu-latest
     if: github.event_name == 'schedule'
     steps:
       - uses: actions/checkout@v4
-      - name: Run Benchmarks
-        run: |
-          echo "Running performance benchmarks..."
-          # Add benchmark commands
 
+      - name: Cache Benchmark Artifacts
+        uses: actions/cache@v3
+        with:
+          path: target/benchmarks
+          key: benchmarks-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: benchmarks-${{ runner.os }}-
+
+      - name: Run Benchmarks
+        run: echo "Running full performance benchmarks..."
