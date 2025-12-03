@@ -1,0 +1,126 @@
+name: Polkadot-SDK CI
+
+on:
+  push:
+    branches:
+      - master
+    # Only trigger heavy jobs on code or dependency changes
+    paths:
+      - 'Cargo.toml'
+      - 'src/**'
+      - 'pallets/**'
+  pull_request:
+    branches:
+      - master
+
+jobs:
+
+  # -------------------------
+  # 1️⃣ Quick Checks (Docs / minor edits)
+  # -------------------------
+  quick-checks:
+    runs-on: ubuntu-latest
+    if: contains(github.event.head_commit.message, 'docs') || contains(github.event.head_commit.message, 'comment')
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Quick Checks
+        run: |
+          echo "Running quick sanity checks..."
+          # Add commands for linting or small tests
+      - name: Build Docs
+        run: |
+          echo "Building documentation..."
+          # e.g., mdbook build docs/
+
+  # -------------------------
+  # 2️⃣ Unit Tests / Integration Tests
+  # -------------------------
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust + Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y curl build-essential
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          source $HOME/.cargo/env
+          rustup default stable
+      - name: Run Unit Tests
+        run: |
+          cargo test --workspace --all-features
+
+  tests-linux-stable:
+    runs-on: ubuntu-latest
+    needs: tests
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Linux Stable Tests
+        run: |
+          cargo test --workspace --target x86_64-unknown-linux-gnu
+
+  tests-misc:
+    runs-on: ubuntu-latest
+    needs: tests
+    steps:
+      - uses: actions/checkout@v4
+      - name: Misc Tests
+        run: |
+          cargo test --workspace --all-targets
+
+  # -------------------------
+  # 3️⃣ Zombienet / Integration (Heavy)
+  # -------------------------
+  zombienet:
+    runs-on: ubuntu-latest
+    needs: tests
+    if: github.event_name != 'pull_request' # optional: skip heavy for PRs
+    strategy:
+      matrix:
+        node: [substrate, polkadot, cumulus, parachain_templates]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node
+        run: |
+          echo "Setting up Zombienet node for ${{ matrix.node }}"
+          # Add node setup commands
+      - name: Run Integration Tests
+        run: |
+          echo "Running heavy integration tests..."
+          # Command to start nodes and test
+
+  # -------------------------
+  # 4️⃣ Check Publish / Crates
+  # -------------------------
+  check-publish:
+    runs-on: ubuntu-latest
+    needs: tests
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check Crates
+        run: |
+          cargo publish --dry-run
+
+  claim-crates:
+    runs-on: ubuntu-latest
+    needs: check-publish
+    steps:
+      - uses: actions/checkout@v4
+      - name: Claim Crates
+        run: |
+          echo "Claiming crates ownership..."
+          # Command to claim crates
+
+  # -------------------------
+  # 5️⃣ Benchmarks (Optional / Nightly)
+  # -------------------------
+  benchmarks:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Benchmarks
+        run: |
+          echo "Running performance benchmarks..."
+          # Add benchmark commands
+
