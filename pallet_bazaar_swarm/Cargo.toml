@@ -1,13 +1,15 @@
 [package]
-name = "pallet_bazaar_swarm"
+name = "pallet-bazaar-swarm"
 version = "0.1.0"
 edition = "2021"
+publish = false
 
 [dependencies]
-frame-support = { default-features = false, version = "5.0.0" }
-frame-system = { default-features = false, version = "5.0.0" }
-sp-runtime = { default-features = false, version = "5.0.0" }
-sp-std = { default-features = false, version = "5.0.0" }
+frame-support = { workspace = true, default-features = false }
+frame-system  = { workspace = true, default-features = false }
+sp-runtime    = { workspace = true, default-features = false }
+sp-std        = { workspace = true, default-features = false }
+scale-info    = { workspace = true, default-features = false, features = ["derive"] }
 
 [features]
 default = ["std"]
@@ -15,4 +17,6 @@ std = [
     "frame-support/std",
     "frame-system/std",
     "sp-runtime/std",
+    "sp-std/std",
+    "scale-info/std",
 ]
