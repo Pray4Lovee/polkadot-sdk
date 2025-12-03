@@ -1,5 +1,5 @@
 [package]
-name = "pallet-bazaar-swarm"   # folder name matches this
+name = "pallet-bazaar-swarm"   # MUST match folder name
 version = "0.1.0"
 edition = "2021"
 publish = false
