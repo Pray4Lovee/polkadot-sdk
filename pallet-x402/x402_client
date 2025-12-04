@@ -1,0 +1,42 @@
+use sp_core::sr25519;
+use sp_core::Pair;
+use sp_runtime::MultiAddress;
+use substrate_subxt::{ClientBuilder, DefaultConfig, PairSigner};
+use std::{fs, time::Instant};
+
+fn main() {
+    let ledger_file = std::env::args().nth(1).expect("Ledger file path missing");
+    let mnemonic = std::env::args().nth(2).expect("Mnemonic missing");
+    let resource = std::env::args().nth(3).expect("Resource missing");
+    let amount: u128 = std::env::args().nth(4).unwrap().parse().unwrap();
+    let ws_url = std::env::args().nth(5).unwrap();
+
+    let signer = sr25519::Pair::from_string(&mnemonic, None).unwrap();
+    let signer = PairSigner::<DefaultConfig, _>::new(signer);
+
+    // Offline signing
+    let signature = signer.sign(resource.as_bytes());
+    let mut ledger = fs::read_to_string(&ledger_file).unwrap_or("[]".to_string());
+    let mut payments: Vec<serde_json::Value> = serde_json::from_str(&ledger).unwrap();
+    payments.push(serde_json::json!({"resource":resource,"amount":amount,"signature":hex::encode(signature),"offline":true}));
+    fs::write(&ledger_file, serde_json::to_string_pretty(&payments).unwrap()).unwrap();
+    println!("💾 Offline payment stored: {}", resource);
+
+    // Connect and submit on-chain
+    let client = futures::executor::block_on(ClientBuilder::<DefaultConfig>::new().set_url(ws_url).build()).unwrap();
+    let start = Instant::now();
+    futures::executor::block_on(async {
+        for i in 0..5 {
+            let tx = client.tx().call("X402Gateway", "authorize_payment", (format!("{}{}", resource,i), amount, false), &signer).await.unwrap();
+            println!("✅ Payment submitted on-chain: {:?}", tx);
+        }
+    });
+    let duration = start.elapsed();
+    println!("⏱ Benchmark complete: 5 tx in {:?}", duration);
+
+    // OOO handoff: mark ledger offline=false
+    for p in payments.iter_mut() { p["offline"] = serde_json::Value::Bool(false); }
+    fs::write(&ledger_file, serde_json::to_string_pretty(&payments).unwrap()).unwrap();
+    println!("🔄 OOO handoff completed.");
+    println!("🌟 x402 1-of-1 E2E complete!");
+}
