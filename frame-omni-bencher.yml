@@ -1,0 +1,59 @@
+name: Frame Omni Bencher
+
+# Trigger workflow on pushes to master or manually
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+jobs:
+  frame-benchmarks:
+    # Use a matrix to run multiple runtimes
+    strategy:
+      matrix:
+        runtime: [
+          dev,
+          kitchensink-runtime,
+          westend-runtime,
+          rococo-runtime,
+          asset-hub-westend-runtime,
+          bridge-hub-rococo-runtime,
+          coretime-rococo-runtime,
+          people-westend-runtime
+        ]
+      fail-fast: false
+      max-parallel: 4  # limit parallel jobs to avoid runner queue
+    runs-on: [self-hosted, linux]
+
+    timeout-minutes: 360  # 6h per job, adjust for heavier benchmarks
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Setup Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake pkg-config libssl-dev git clang
+
+      - name: Build Runtime Benchmarks
+        run: |
+          echo "Running benchmarks for runtime: ${{ matrix.runtime }}"
+          cargo build --release -p ${{ matrix.runtime }}
+          
+      - name: Run Benchmarks
+        run: |
+          cargo bench --bench ${{ matrix.runtime }}
+
+      - name: Upload Benchmark Artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: benchmark-${{ matrix.runtime }}
+          path: target/criterion
