@@ -5,101 +5,188 @@ on:
     inputs:
       test_pattern:
         type: string
-        description: "Run tests which names match this pattern (also flaky)"
+        description: "Run tests matching this pattern"
         default: ""
         required: false
   push:
-   branches:
-     - master
+    branches:
+      - master
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
-  merge_group:
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
-permissions: read-all
-
 env:
-  FF_DISABLE_UMASK_FOR_DOCKER_EXECUTOR: 1
-  LOCAL_DIR: "./polkadot/zombienet_tests"
-  GHA_CLUSTER_SERVER_ADDR: "https://kubernetes.default:443"
-  # use spot by default
-  X_INFRA_INSTANCE: "spot"
-  # don't retry sdk tests
-  NEXTEST_RETRIES: 0
-  KUBECONFIG: "/data/config"
-  ZOMBIE_CLEANER_DISABLED: 1
+  COMMIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
 
-# only run if we have changes in [subtrate, polkadot] directories or this workflow.
 jobs:
-  isdraft:
-    uses: ./.github/workflows/reusable-isdraft.yml
+  # ----------------------------
+  # Preflight Checks
+  # ----------------------------
   preflight:
-    needs: isdraft
-    uses: ./.github/workflows/zombienet-reusable-preflight.yml
+    uses: ./.github/workflows/reusable-preflight.yml
     with:
-      tests_yaml: .github/zombienet-tests/zombienet_polkadot_tests.yml
+      tests_yaml: .github/zombienet-tests/zombienet_parachain-template_tests.yml
       test_pattern: ${{ inputs.test_pattern }}
 
-  zombienet-polkadot-tests:
-    name: ${{ matrix.test.job-name }}
-    runs-on: ${{ matrix.test.runner-type == 'large' && (matrix.test.use-zombienet-sdk && needs.preflight.outputs.ZOMBIENET_SDK_LARGE_RUNNER || needs.preflight.outputs.ZOMBIENET_LARGE_RUNNER) || (matrix.test.use-zombienet-sdk && needs.preflight.outputs.ZOMBIENET_SDK_DEFAULT_RUNNER || needs.preflight.outputs.ZOMBIENET_DEFAULT_RUNNER) }}
-    timeout-minutes: 60
-    needs: [preflight]
-    if: ${{ (needs.preflight.outputs.changes_substrate || needs.preflight.outputs.changes_polkadot) }}
+  # ----------------------------
+  # Build Linux Stable
+  # ----------------------------
+  build-linux-stable:
+    needs: preflight
+    runs-on: ${{ needs.preflight.outputs.RUNNER }}
     container:
-      image: ${{ matrix.test.use-zombienet-sdk && needs.preflight.outputs.ZOMBIENET_SDK_IMAGE || needs.preflight.outputs.ZOMBIENET_IMAGE }}
-      options: -v /tmp/zombienet:/tmp/zombienet
-    env:
-      ZOMBIENET_INTEGRATION_TEST_IMAGE: "${{ needs.preflight.outputs.TEMP_IMAGES_BASE }}/polkadot-debug:${{ needs.preflight.outputs.DOCKER_IMAGES_VERSION }}"
-      POLKADOT_IMAGE: "${{ needs.preflight.outputs.TEMP_IMAGES_BASE }}/polkadot-debug:${{ needs.preflight.outputs.DOCKER_IMAGES_VERSION }}"
-      COL_IMAGE: "${{ needs.preflight.outputs.TEMP_IMAGES_BASE }}/colander:${{ needs.preflight.outputs.DOCKER_IMAGES_VERSION }}"
-      CUMULUS_IMAGE: "${{ needs.preflight.outputs.TEMP_IMAGES_BASE }}/${{ matrix.test.cumulus-image || 'polkadot-parachain-debug' }}:${{ needs.preflight.outputs.DOCKER_IMAGES_VERSION }}"
-      MALUS_IMAGE: "${{ needs.preflight.outputs.TEMP_IMAGES_BASE }}/malus:${{ needs.preflight.outputs.DOCKER_IMAGES_VERSION }}"
-      DEBUG: ${{ needs.preflight.outputs.DEBUG }}
-      ZOMBIENET_PROVIDER: ${{ needs.preflight.outputs.ZOMBIENET_PROVIDER }}
-      RUST_LOG: ${{ needs.preflight.outputs.RUST_LOG }}
-      ZOMBIE_PROVIDER: ${{ needs.preflight.outputs.ZOMBIE_PROVIDER }}
-    strategy:
-      fail-fast: false
-      matrix:
-        test: ${{ fromJson(needs.preflight.outputs.TEST_MATRIX) }}
-
+      image: ${{ needs.preflight.outputs.IMAGE }}
+    timeout-minutes: 60
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set additional environment variables
-        if: ${{ matrix.test.additional-env }}
-        shell: bash
+      - uses: actions/checkout@v4
+      - name: Build Polkadot Binaries
         run: |
-          echo '${{ toJson(matrix.test.additional-env) }}' | jq -r 'to_entries[] | "\(.key)=\(.value)"' >> $GITHUB_ENV
-
-      - name: Additional setup
-        if: ${{ matrix.test.additional-setup }}
-        shell: bash
-        run: ${{ matrix.test.additional-setup }}
-
-      - name: zombienet_test (v1)
-        if: ${{ !matrix.test.use-zombienet-sdk }}
-        uses: ./.github/actions/zombienet
+          forklift cargo build --locked --profile testnet --features pyroscope,fast-runtime \
+            --bin polkadot --bin polkadot-prepare-worker --bin polkadot-execute-worker
+          ROCOCO_EPOCH_DURATION=10 ./polkadot/scripts/build-only-wasm.sh rococo-runtime $(pwd)/runtimes/rococo-runtime-10/
+          ROCOCO_EPOCH_DURATION=100 ./polkadot/scripts/build-only-wasm.sh rococo-runtime $(pwd)/runtimes/rococo-runtime-100/
+          ROCOCO_EPOCH_DURATION=600 ./polkadot/scripts/build-only-wasm.sh rococo-runtime $(pwd)/runtimes/rococo-runtime-600/
+      - name: Pack Artifacts
+        run: |
+          mkdir -p artifacts
+          VERSION="${{ needs.preflight.outputs.SOURCE_REF_SLUG }}"
+          mv target/testnet/polkadot artifacts/
+          mv target/testnet/polkadot-prepare-worker artifacts/
+          mv target/testnet/polkadot-execute-worker artifacts/
+          mv runtimes/ artifacts/
+          cd artifacts
+          sha256sum polkadot | tee polkadot.sha256
+          shasum -c polkadot.sha256
+          EXTRATAG="${VERSION}-${COMMIT_SHA}"
+          echo -n "${VERSION}" > VERSION
+          echo -n "${EXTRATAG}" > EXTRATAG
+          echo -n "${GITHUB_RUN_ID}" > BUILD_LINUX_JOB_ID
+      - name: Create TAR
+        run: tar -cvf artifacts.tar artifacts
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
         with:
-          test-definition: ${{ matrix.test.test-definition }}
-          job-name: ${{ matrix.test.job-name }}
-          local-dir: ${{ matrix.test.local-dir }}
-          concurrency: ${{ matrix.test.concurrency || 1 }}
-          gh-token: ${{ secrets.GITHUB_TOKEN }}
-          build-id: ${{ needs.preflight.outputs.BUILD_RUN_ID }}
-          ref-slug: ${{ needs.preflight.outputs.SOURCE_REF_SLUG }}
+          name: build-linux-stable-${{ needs.preflight.outputs.SOURCE_REF_SLUG }}
+          path: artifacts.tar
+          retention-days: 7
 
-      - name: zombienet_test (sdk)
-        if: ${{ matrix.test.use-zombienet-sdk }}
-        uses: ./.github/actions/zombienet-sdk
+  # ----------------------------
+  # Build Linux Stable Cumulus
+  # ----------------------------
+  build-linux-stable-cumulus:
+    needs: preflight
+    runs-on: ${{ needs.preflight.outputs.RUNNER }}
+    container:
+      image: ${{ needs.preflight.outputs.IMAGE }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Polkadot Parachain Binary
+        run: |
+          forklift cargo build --release --locked -p polkadot-parachain-bin --bin polkadot-parachain
+          mkdir -p artifacts
+          mv target/release/polkadot-parachain artifacts/
+          echo -n "${{ needs.preflight.outputs.SOURCE_REF_SLUG }}" > artifacts/VERSION
+      - name: Create TAR
+        run: tar -cvf artifacts.tar artifacts
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
         with:
-          test-filter: ${{ matrix.test.test-filter }}
-          job-name: ${{ matrix.test.job-name }}
-          prefix: "polkadot"
-          gh-token: ${{ secrets.GITHUB_TOKEN }}
-          build-id: ${{ needs.preflight.outputs.BUILD_RUN_ID }}
-          ref-slug: ${{ needs.preflight.outputs.SOURCE_REF_SLUG }}
+          name: build-linux-stable-cumulus-${{ needs.preflight.outputs.SOURCE_REF_SLUG }}
+          path: artifacts.tar
+          retention-days: 7
+
+  # ----------------------------
+  # Build Test Parachain
+  # ----------------------------
+  build-test-parachain:
+    needs: preflight
+    runs-on: ${{ needs.preflight.outputs.RUNNER }}
+    container:
+      image: ${{ needs.preflight.outputs.IMAGE }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Test Parachain Binary
+        run: |
+          forklift cargo build --release --locked -p cumulus-test-service --bin test-parachain
+          mkdir -p artifacts/zombienet
+          mv target/release/test-parachain artifacts/
+          mv target/release/wbuild/cumulus-test-runtime/wasm_binary_spec_version_incremented.rs.compact.compressed.wasm artifacts/zombienet/
+      - name: Create TAR
+        run: tar -cvf artifacts.tar artifacts
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-test-parachain-${{ needs.preflight.outputs.SOURCE_REF_SLUG }}
+          path: artifacts.tar
+          retention-days: 7
+
+  # ----------------------------
+  # Build Test Collators
+  # ----------------------------
+  build-test-collators:
+    needs: preflight
+    runs-on: ${{ needs.preflight.outputs.RUNNER }}
+    container:
+      image: ${{ needs.preflight.outputs.IMAGE }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Collators
+        run: |
+          forklift cargo build --locked --profile testnet -p test-parachain-adder-collator
+          forklift cargo build --locked --profile testnet -p test-parachain-undying-collator
+          mkdir -p artifacts
+          mv target/testnet/adder-collator artifacts/
+          mv target/testnet/undying-collator artifacts/
+          echo -n "${{ needs.preflight.outputs.SOURCE_REF_SLUG }}" > artifacts/VERSION
+      - name: Create TAR
+        run: tar -cvf artifacts.tar artifacts
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-test-collators-${{ needs.preflight.outputs.SOURCE_REF_SLUG }}
+          path: artifacts.tar
+          retention-days: 7
+
+  # ----------------------------
+  # Run x402 Full 1-of-1 E2E
+  # ----------------------------
+  run-x402-e2e:
+    runs-on: ubuntu-latest
+    needs: [build-test-parachain, build-test-collators]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run x402 full 1-of-1 E2E
+        run: |
+          chmod +x ./x402_full_1of1.sh
+          ./x402_full_1of1.sh
+      - name: Upload Ledger Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: x402-ledger
+          path: ./ledger.json
+          retention-days: 7
+
+  # ----------------------------
+  # Confirm All Required Builds Passed
+  # ----------------------------
+  confirm-required-build-jobs-passed:
+    runs-on: ubuntu-latest
+    needs: [build-linux-stable, build-linux-stable-cumulus, build-test-parachain, build-test-collators, run-x402-e2e]
+    if: always() && !cancelled()
+    steps:
+      - name: Check build results
+        run: |
+          echo "Confirming required build jobs passed..."
+          tee resultfile <<< '${{ toJSON(needs) }}'
+          FAILURES=$(cat resultfile | grep '"result": "failure"' | wc -l)
+          if [ $FAILURES -gt 0 ]; then
+            echo "### At least one required job failed ❌" >> $GITHUB_STEP_SUMMARY
+            exit 1
+          else
+            echo '### All required jobs passed 🚀' >> $GITHUB_STEP_SUMMARY
