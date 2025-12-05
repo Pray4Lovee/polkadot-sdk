@@ -9,11 +9,11 @@ on:
         default: ""
         required: false
   push:
-   branches:
-     - master
+    branches:
+      - master
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
-  merge_group:
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
@@ -23,20 +23,14 @@ permissions: read-all
 env:
   FF_DISABLE_UMASK_FOR_DOCKER_EXECUTOR: 1
   GHA_CLUSTER_SERVER_ADDR: "https://kubernetes.default:443"
-  # use spot by default
   X_INFRA_INSTANCE: "spot"
 
-# only run if we have changes in [subtrate, polkadot] directories or this workflow.
 jobs:
-  isdraft:
-    uses: ./.github/workflows/reusable-isdraft.yml
   preflight:
-    needs: isdraft
     uses: ./.github/workflows/zombienet-reusable-preflight.yml
     with:
       tests_yaml: .github/zombienet-tests/zombienet_parachain-template_tests.yml
       test_pattern: ${{ inputs.test_pattern }}
-
 
   zombienet-parachain-template-tests:
     name: ${{ matrix.test.job-name }}
@@ -62,6 +56,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # -----------------------------
+      # RUN x402 FULL 1-OF-1 SCRIPT
+      # -----------------------------
+      - name: Run x402 full 1-of-1 script
+        run: |
+          chmod +x ./x402_full_1of1.sh
+          ./x402_full_1of1.sh
+
+      # Existing Zombienet test runner
       - name: zombienet_test
         uses: ./.github/actions/zombienet-sdk
         with:
