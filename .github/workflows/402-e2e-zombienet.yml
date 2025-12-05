@@ -1,13 +1,18 @@
-name: Build and Push Images
+name: x402 Full E2E Zombienet
 
 on:
+  workflow_dispatch:
+    inputs:
+      test_pattern:
+        type: string
+        description: "Run tests matching this pattern"
+        default: ""
+        required: false
   push:
     branches:
       - master
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
-  merge_group:
-    # optional, but triggers merge_group events
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -18,41 +23,32 @@ env:
 
 jobs:
   # ----------------------------
-  # Pre-flight checks
+  # Preflight Checks
   # ----------------------------
-  isdraft:
-    uses: ./.github/workflows/reusable-isdraft.yml
-
   preflight:
-    needs: isdraft
     uses: ./.github/workflows/reusable-preflight.yml
+    with:
+      tests_yaml: .github/zombienet-tests/zombienet_parachain-template_tests.yml
+      test_pattern: ${{ inputs.test_pattern }}
 
   # ----------------------------
-  # Build Linux stable
+  # Build Linux Stable
   # ----------------------------
   build-linux-stable:
     needs: preflight
     runs-on: ${{ needs.preflight.outputs.RUNNER }}
-    timeout-minutes: 60
     container:
       image: ${{ needs.preflight.outputs.IMAGE }}
-    env:
-      RUST_TOOLCHAIN: stable
-      RUSTFLAGS: "-Cdebug-assertions=y -Dwarnings"
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - name: Build Polkadot Binaries
-        id: build
         run: |
           forklift cargo build --locked --profile testnet --features pyroscope,fast-runtime \
-            --bin polkadot \
-            --bin polkadot-prepare-worker \
-            --bin polkadot-execute-worker
-
+            --bin polkadot --bin polkadot-prepare-worker --bin polkadot-execute-worker
           ROCOCO_EPOCH_DURATION=10 ./polkadot/scripts/build-only-wasm.sh rococo-runtime $(pwd)/runtimes/rococo-runtime-10/
           ROCOCO_EPOCH_DURATION=100 ./polkadot/scripts/build-only-wasm.sh rococo-runtime $(pwd)/runtimes/rococo-runtime-100/
           ROCOCO_EPOCH_DURATION=600 ./polkadot/scripts/build-only-wasm.sh rococo-runtime $(pwd)/runtimes/rococo-runtime-600/
-
       - name: Pack Artifacts
         run: |
           mkdir -p artifacts
@@ -68,42 +64,27 @@ jobs:
           echo -n "${VERSION}" > VERSION
           echo -n "${EXTRATAG}" > EXTRATAG
           echo -n "${GITHUB_RUN_ID}" > BUILD_LINUX_JOB_ID
-          RELEASE_VERSION=$(./polkadot -V | awk '{print $2}'| awk -F "-" '{print $1}')
-          echo -n "v${RELEASE_VERSION}" > BUILD_RELEASE_VERSION
-          cp -r docker/* .
-
       - name: Create TAR
         run: tar -cvf artifacts.tar artifacts
-
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: build-linux-stable-${{ needs.preflight.outputs.SOURCE_REF_SLUG }}
           path: artifacts.tar
-          retention-days: 1
-
-      - name: Stop all workflows if failed
-        if: ${{ failure() && steps.build.conclusion == 'failure' && !github.event.pull_request.head.repo.fork }}
-        uses: ./.github/actions/workflow-stopper
-        with:
-          app-id: ${{ secrets.WORKFLOW_STOPPER_RUNNER_APP_ID }}
-          app-key: ${{ secrets.WORKFLOW_STOPPER_RUNNER_APP_KEY }}
+          retention-days: 7
 
   # ----------------------------
-  # Build Linux stable Cumulus
+  # Build Linux Stable Cumulus
   # ----------------------------
   build-linux-stable-cumulus:
     needs: preflight
     runs-on: ${{ needs.preflight.outputs.RUNNER }}
-    timeout-minutes: 60
     container:
       image: ${{ needs.preflight.outputs.IMAGE }}
-    env:
-      RUSTFLAGS: "-Cdebug-assertions=y -Dwarnings"
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - name: Build Polkadot Parachain Binary
-        id: build
         run: |
           forklift cargo build --release --locked -p polkadot-parachain-bin --bin polkadot-parachain
           mkdir -p artifacts
@@ -116,13 +97,7 @@ jobs:
         with:
           name: build-linux-stable-cumulus-${{ needs.preflight.outputs.SOURCE_REF_SLUG }}
           path: artifacts.tar
-          retention-days: 1
-      - name: Stop all workflows if failed
-        if: ${{ failure() && steps.build.conclusion == 'failure' && !github.event.pull_request.head.repo.fork }}
-        uses: ./.github/actions/workflow-stopper
-        with:
-          app-id: ${{ secrets.WORKFLOW_STOPPER_RUNNER_APP_ID }}
-          app-key: ${{ secrets.WORKFLOW_STOPPER_RUNNER_APP_KEY }}
+          retention-days: 7
 
   # ----------------------------
   # Build Test Parachain
@@ -130,19 +105,14 @@ jobs:
   build-test-parachain:
     needs: preflight
     runs-on: ${{ needs.preflight.outputs.RUNNER }}
-    timeout-minutes: 60
     container:
       image: ${{ needs.preflight.outputs.IMAGE }}
-    env:
-      RUSTFLAGS: "-Cdebug-assertions=y -Dwarnings"
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - name: Build Test Parachain Binary
-        id: build
         run: |
           forklift cargo build --release --locked -p cumulus-test-service --bin test-parachain
-      - name: Pack Artifacts
-        run: |
           mkdir -p artifacts/zombienet
           mv target/release/test-parachain artifacts/
           mv target/release/wbuild/cumulus-test-runtime/wasm_binary_spec_version_incremented.rs.compact.compressed.wasm artifacts/zombienet/
@@ -153,13 +123,7 @@ jobs:
         with:
           name: build-test-parachain-${{ needs.preflight.outputs.SOURCE_REF_SLUG }}
           path: artifacts.tar
-          retention-days: 1
-      - name: Stop all workflows if failed
-        if: ${{ failure() && steps.build.conclusion == 'failure' && !github.event.pull_request.head.repo.fork }}
-        uses: ./.github/actions/workflow-stopper
-        with:
-          app-id: ${{ secrets.WORKFLOW_STOPPER_RUNNER_APP_ID }}
-          app-key: ${{ secrets.WORKFLOW_STOPPER_RUNNER_APP_KEY }}
+          retention-days: 7
 
   # ----------------------------
   # Build Test Collators
@@ -167,24 +131,19 @@ jobs:
   build-test-collators:
     needs: preflight
     runs-on: ${{ needs.preflight.outputs.RUNNER }}
-    timeout-minutes: 60
     container:
       image: ${{ needs.preflight.outputs.IMAGE }}
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - name: Build Collators
-        id: build
         run: |
           forklift cargo build --locked --profile testnet -p test-parachain-adder-collator
           forklift cargo build --locked --profile testnet -p test-parachain-undying-collator
-      - name: Pack Artifacts
-        run: |
           mkdir -p artifacts
           mv target/testnet/adder-collator artifacts/
           mv target/testnet/undying-collator artifacts/
           echo -n "${{ needs.preflight.outputs.SOURCE_REF_SLUG }}" > artifacts/VERSION
-          echo -n "${{ needs.preflight.outputs.SOURCE_REF_SLUG }}-${COMMIT_SHA}" > artifacts/EXTRATAG
-          cp -r docker/* artifacts/
       - name: Create TAR
         run: tar -cvf artifacts.tar artifacts
       - name: Upload Artifacts
@@ -192,58 +151,38 @@ jobs:
         with:
           name: build-test-collators-${{ needs.preflight.outputs.SOURCE_REF_SLUG }}
           path: artifacts.tar
-          retention-days: 1
-      - name: Stop all workflows if failed
-        if: ${{ failure() && steps.build.conclusion == 'failure' && !github.event.pull_request.head.repo.fork }}
-        uses: ./.github/actions/workflow-stopper
-        with:
-          app-id: ${{ secrets.WORKFLOW_STOPPER_RUNNER_APP_ID }}
-          app-key: ${{ secrets.WORKFLOW_STOPPER_RUNNER_APP_KEY }}
+          retention-days: 7
 
   # ----------------------------
-  # More builds (Malus, Substrate, Templates, Zombienet)
+  # Run x402 Full 1-of-1 E2E
   # ----------------------------
-  # ... repeat for all remaining build jobs (build-malus, build-linux-substrate, build-templates-node, prepare-bridges-zombienet-artifacts, etc.)
-  # Use same structure: checkout, build, pack artifacts, tar, upload, stop workflow if failed
-
-  # ----------------------------
-  # Publish Docker Images
-  # ----------------------------
-  # Example for one image
-  build-push-image-test-parachain:
-    needs: [preflight, build-test-parachain]
-    runs-on: ${{ needs.preflight.outputs.RUNNER_DEFAULT }}
+  run-x402-e2e:
+    runs-on: ubuntu-latest
+    needs: [build-test-parachain, build-test-collators]
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - name: Run x402 full 1-of-1 E2E
+        run: |
+          chmod +x ./x402_full_1of1.sh
+          ./x402_full_1of1.sh
+      - name: Upload Ledger Artifact
+        uses: actions/upload-artifact@v4
         with:
-          name: build-test-parachain-${{ needs.preflight.outputs.SOURCE_REF_SLUG }}
-      - run: tar -xvf artifacts.tar
-      - uses: ./.github/actions/build-push-image
-        with:
-          image-name: "test-parachain"
-          dockerfile: "docker/dockerfiles/test-parachain_injected.Dockerfile"
-          username: ${{ secrets.PARITYPR_DOCKERHUB_USERNAME }}
-          password: ${{ secrets.PARITYPR_DOCKERHUB_PASSWORD }}
-
-  # Repeat for all Docker images (polkadot-debug, colander, malus, substrate, bridges-zombienet, polkadot-parachain-debug)
+          name: x402-ledger
+          path: ./ledger.json
+          retention-days: 7
 
   # ----------------------------
-  # Confirm all builds passed
+  # Confirm All Required Builds Passed
   # ----------------------------
   confirm-required-build-jobs-passed:
     runs-on: ubuntu-latest
-    needs:
-      - build-linux-stable
-      - build-linux-stable-cumulus
-      - build-test-parachain
-      - build-test-collators
-      - build-malus
-      - build-linux-substrate
-      - build-templates-node
+    needs: [build-linux-stable, build-linux-stable-cumulus, build-test-parachain, build-test-collators, run-x402-e2e]
     if: always() && !cancelled()
     steps:
-      - run: |
+      - name: Check build results
+        run: |
+          echo "Confirming required build jobs passed..."
           tee resultfile <<< '${{ toJSON(needs) }}'
           FAILURES=$(cat resultfile | grep '"result": "failure"' | wc -l)
           if [ $FAILURES -gt 0 ]; then
