@@ -133,28 +133,39 @@ jobs:
             RUSTDOCFLAGS="-D warnings" cargo +nightly doc --all-features --no-deps --document-private-items
           fi
 
-  # ── Microlayer 08: Rust Multi-Version Compatibility Matrix ──
-  rust-matrix:
-    runs-on: parity-large
-    needs: quality-gate
-    strategy:
-      fail-fast: false
-      matrix:
-        rust: [1.71.0, stable, beta, nightly]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@${{ matrix.rust }}
-        with:
-          override: true
-      - name: Restore Cargo cache for ${{ matrix.rust }}
-        uses: actions/cache/restore@v4
-        with:
-          path: ~/.cargo/registry ~/.cargo/git target
-          key: ${{ needs.cache-keys.outputs.cargo_key }}-${{ matrix.rust }}
-      - name: Check & Unit Tests
-        run: |
-          cargo check --all-features --all-targets
-          cargo test --all-features -- --nocapture --test-threads=8
+ # ── Microlayer 08: Rust Multi-Version Compatibility Matrix ──
+rust-matrix:
+  runs-on: parity-large
+  needs: quality-gate
+  strategy:
+    fail-fast: false
+    matrix:
+      rust: [1.71.0, stable, beta, nightly]
+  steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Install Rust ${{ matrix.rust }}
+      run: |
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+        rustup install ${{ matrix.rust }}
+        rustup override set ${{ matrix.rust }}
+        rustc --version
+        cargo --version
+
+    - name: Restore Cargo cache for ${{ matrix.rust }}
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ needs.cache-keys.outputs.cargo_key }}-${{ matrix.rust }}
+
+    - name: Check & Unit Tests
+      run: |
+        cargo check --all-features --all-targets
+        cargo test --all-features -- --nocapture --test-threads=8
 
   # ── Microlayer 09: Buildx Setup & Multi-Arch Cache ──
   buildx-setup:
