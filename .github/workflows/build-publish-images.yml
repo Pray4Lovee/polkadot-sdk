@@ -1,4 +1,5 @@
 name: Build & Push ETH-RPC Image
+
 on:
   push:
     branches:
@@ -23,12 +24,10 @@ env:
   DOCKERFILE: ./substrate/frame/revive/rpc/dockerfiles/eth-rpc/Dockerfile
 
 jobs:
-  # ── Microlayer 01: Draft PR Early Exit ──
   isdraft:
     if: github.event_name == 'pull_request'
     uses: ./.github/workflows/reusable-isdraft.yml
 
-  # ── Microlayer 02: Semantic Versioning & Tagging Strategy ──
   set-variables:
     runs-on: ubuntu-latest
     needs: isdraft
@@ -38,26 +37,25 @@ jobs:
       SHORT_SHA: ${{ steps.version.outputs.SHORT_SHA }}
       TAG_LATEST: ${{ steps.version.outputs.TAG_LATEST }}
     steps:
-      - name: Calculate advanced version
+      - name: Calculate version
         id: version
         run: |
-          SHORT_SHA=${{ github.sha }} | cut -c1-8
-          if [[ ${{ github.ref }} == refs/heads/master ]]; then
+          SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-8)
+          if [[ "${GITHUB_REF}" == "refs/heads/master" ]]; then
             VERSION=latest
             TAG_LATEST=true
-          elif [[ ${{ github.ref_type }} == tag ]]; then
-            VERSION=${{ github.ref_name }}
+          elif [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            VERSION=${GITHUB_REF_NAME}
             TAG_LATEST=false
           else
-            BRANCH_SLUG=$(echo ${{ github.ref_name }} | tr '/' '_' | tr '[:upper:]' '[:lower:]')
+            BRANCH_SLUG=$(echo ${GITHUB_REF_NAME} | tr '/' '_' | tr '[:upper:]' '[:lower:]')
             VERSION=${BRANCH_SLUG}-${SHORT_SHA}
             TAG_LATEST=false
           fi
-          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
-          echo "SHORT_SHA=$SHORT_SHA" >> $GITHUB_OUTPUT
-          echo "TAG_LATEST=$TAG_LATEST" >> $GITHUB_OUTPUT
+          echo "VERSION=${VERSION}" >> $GITHUB_OUTPUT
+          echo "SHORT_SHA=${SHORT_SHA}" >> $GITHUB_OUTPUT
+          echo "TAG_LATEST=${TAG_LATEST}" >> $GITHUB_OUTPUT
 
-  # ── Microlayer 03: Global Cache Key Generation ──
   cache-keys:
     runs-on: ubuntu-latest
     needs: set-variables
@@ -71,7 +69,6 @@ jobs:
           echo "cargo=cargo-v1-${{ hashFiles('**/Cargo.lock') }}" >> $GITHUB_OUTPUT
           echo "docker=docker-v1-${{ hashFiles(env.DOCKERFILE, '**/Cargo.lock') }}-${{ needs.set-variables.outputs.SHORT_SHA }}" >> $GITHUB_OUTPUT
 
-  # ── Microlayer 04: Repository Checkout with Full History ──
   checkout:
     runs-on: ubuntu-latest
     needs: set-variables
@@ -80,7 +77,6 @@ jobs:
         with:
           fetch-depth: 0
 
-  # ── Microlayer 05: Rust Toolchain Cache (per-version) ──
   rust-cache:
     runs-on: ubuntu-latest
     needs: checkout
@@ -96,7 +92,6 @@ jobs:
           restore-keys: |
             ${{ needs.cache-keys.outputs.cargo_key }}
 
-  # ── Microlayer 06: Security Advisory & Dependency Checks ──
   cargo-security:
     runs-on: ubuntu-latest
     needs: rust-cache
@@ -111,7 +106,6 @@ jobs:
           cargo install cargo-${{ matrix.tool }} --locked
           cargo ${{ matrix.tool }} check
 
-  # ── Microlayer 07: Code Quality Matrix (fmt/clippy/docs) ──
   quality-gate:
     runs-on: ubuntu-latest
     needs: cargo-security
@@ -123,7 +117,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@nightly
         with:
           components: rustfmt, clippy
-      - name: ${{ matrix.check }}
+      - name: Run ${{ matrix.check }}
         run: |
           if [[ "${{ matrix.check }}" == "rustfmt" ]]; then
             cargo +nightly fmt --all -- --check
@@ -131,9 +125,7 @@ jobs:
             cargo +nightly clippy --all-targets --all-features -- -D warnings
           else
             RUSTDOCFLAGS="-D warnings" cargo +nightly doc --all-features --no-deps --document-private-items
-          fi
 
-  # ── Microlayer 08: Rust Multi-Version Compatibility Matrix ──
   rust-matrix:
     runs-on: parity-large
     needs: quality-gate
@@ -146,8 +138,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@${{ matrix.rust }}
         with:
           override: true
-      - name: Restore Cargo cache for ${{ matrix.rust }}
-        uses: actions/cache/restore@v4
+      - name: Restore Cargo cache
+        uses: actions/cache@v4
         with:
           path: ~/.cargo/registry ~/.cargo/git target
           key: ${{ needs.cache-keys.outputs.cargo_key }}-${{ matrix.rust }}
@@ -156,7 +148,6 @@ jobs:
           cargo check --all-features --all-targets
           cargo test --all-features -- --nocapture --test-threads=8
 
-  # ── Microlayer 09: Buildx Setup & Multi-Arch Cache ──
   buildx-setup:
     runs-on: parity-large
     needs: rust-matrix
@@ -166,14 +157,13 @@ jobs:
         uses: docker/setup-qemu-action@v3
       - name: Set up Buildx
         uses: docker/setup-buildx-action@v3
-      - name: Cache Docker layers (GHA backend)
+      - name: Cache Docker layers
         uses: actions/cache@v4
         with:
           path: /tmp/.buildx-cache
           key: ${{ needs.cache-keys.outputs.docker_key }}
           restore-keys: ${{ needs.cache-keys.outputs.docker_key }}
 
-  # ── Microlayer 10: Multi-Arch Docker Build + SBOM + Provenance ──
   docker-build:
     runs-on: parity-large
     needs: buildx-setup
@@ -185,7 +175,7 @@ jobs:
         with:
           username: ${{ secrets.PARITYPR_DOCKERHUB_USERNAME }}
           password: ${{ secrets.PARITYPR_DOCKERHUB_PASSWORD }}
-      - name: Build & Push Multi-Arch Microlayer Image
+      - name: Build & Push Multi-Arch Image
         id: build
         uses: docker/build-push-action@v6
         with:
@@ -202,7 +192,6 @@ jobs:
           sbom: true
           outputs: type=image,name=${{ env.ETH_RPC_IMAGE_NAME }},push-by-digest=true
 
-  # ── Microlayer 11: Vulnerability Scanning + SARIF Upload ──
   trivy-scan:
     runs-on: ubuntu-latest
     needs: docker-build
@@ -214,12 +203,11 @@ jobs:
           format: sarif
           output: trivy-results.sarif
           severity: CRITICAL,HIGH,MEDIUM
-      - name: Upload SARIF to GitHub Security
+      - name: Upload SARIF
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: trivy-results.sarif
 
-  # ── Microlayer 12: Keyless Signing + Vulnerability Attestation ──
   sign-attest:
     runs-on: ubuntu-latest
     needs: trivy-scan
@@ -234,7 +222,6 @@ jobs:
           cosign sign --yes ${{ env.ETH_RPC_IMAGE_NAME }}@${DIGEST}
           cosign attest --yes --type vuln --predicate trivy-results.sarif ${{ env.ETH_RPC_IMAGE_NAME }}@${DIGEST}
 
-  # ── Microlayer 13: Full E2E Matrix with Flake-Resistant Retries ──
   e2e-tests:
     runs-on: parity-large
     needs: docker-build
@@ -258,23 +245,22 @@ jobs:
           name: e2e-${{ matrix.node }}-attempt-${{ matrix.attempt }}
           path: tests/logs/*
 
-  # ── Microlayer 14: Flake Detection & Auto-Fail on Persistent Failure ──
   flake-detection:
     runs-on: ubuntu-latest
     needs: e2e-tests
     if: always()
     steps:
       - uses: actions/download-artifact@v4
+        with:
+          path: ./logs
       - name: Detect persistent failures
         run: |
-          if grep -r "FAIL" . | grep -v attempt-2; then
+          if grep -r "FAIL" ./logs | grep -v attempt-2; then
             echo "Persistent test failures detected"
             exit 1
           else
             echo "All tests passed (with retries where needed)"
-          fi
 
-  # ── Microlayer 15: Ephemeral Canary Deployment for PRs ──
   canary-deploy:
     runs-on: parity-large
     needs: e2e-tests
@@ -286,7 +272,6 @@ jobs:
             ${{ env.ETH_RPC_IMAGE_NAME }}:${{ needs.set-variables.outputs.VERSION }} \
             sh -c "./scripts/canary_deploy.sh"
 
-  # ── Microlayer 16: Final Notification with Full Context ──
   notify:
     runs-on: ubuntu-latest
     needs: [docker-build, sign-attest, flake-detection, canary-deploy]
@@ -295,5 +280,4 @@ jobs:
       - name: Pipeline Summary
         run: |
           echo "ETH-RPC Image: ${{ env.ETH_RPC_IMAGE_NAME }}:${{ needs.set-variables.outputs.VERSION }}"
-          echo "Status: ${{ job.status }}"
-          echo "Multi-arch, SBOM-generated, signed, attested, zero persistent E2E failures"
+          echo "Multi-arch build complete, SBOM generated, signed, attested, E2E tests passed"
