@@ -1,5 +1,4 @@
 name: Build & Push ETH-RPC Image
-
 on:
   push:
     branches:
@@ -41,20 +40,20 @@ jobs:
         id: version
         run: |
           SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-8)
-          if [[ "${GITHUB_REF}" == "refs/heads/master" ]]; then
+          if [[ ${{ github.ref }} == refs/heads/master ]]; then
             VERSION=latest
             TAG_LATEST=true
-          elif [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
-            VERSION=${GITHUB_REF_NAME}
+          elif [[ ${{ github.ref_type }} == tag ]]; then
+            VERSION=${{ github.ref_name }}
             TAG_LATEST=false
           else
-            BRANCH_SLUG=$(echo ${GITHUB_REF_NAME} | tr '/' '_' | tr '[:upper:]' '[:lower:]')
+            BRANCH_SLUG=$(echo ${{ github.ref_name }} | tr '/' '_' | tr '[:upper:]' '[:lower:]')
             VERSION=${BRANCH_SLUG}-${SHORT_SHA}
             TAG_LATEST=false
           fi
-          echo "VERSION=${VERSION}" >> $GITHUB_OUTPUT
-          echo "SHORT_SHA=${SHORT_SHA}" >> $GITHUB_OUTPUT
-          echo "TAG_LATEST=${TAG_LATEST}" >> $GITHUB_OUTPUT
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          echo "SHORT_SHA=$SHORT_SHA" >> $GITHUB_OUTPUT
+          echo "TAG_LATEST=$TAG_LATEST" >> $GITHUB_OUTPUT
 
   cache-keys:
     runs-on: ubuntu-latest
@@ -81,7 +80,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: checkout
     steps:
-      - name: Cache Cargo registry + target
+      - name: Cache Cargo registry and target
         uses: actions/cache@v4
         with:
           path: |
@@ -117,7 +116,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@nightly
         with:
           components: rustfmt, clippy
-      - name: Run ${{ matrix.check }}
+      - name: ${{ matrix.check }}
         run: |
           if [[ "${{ matrix.check }}" == "rustfmt" ]]; then
             cargo +nightly fmt --all -- --check
@@ -138,8 +137,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@${{ matrix.rust }}
         with:
           override: true
-      - name: Restore Cargo cache
-        uses: actions/cache@v4
+      - name: Restore Cargo cache for ${{ matrix.rust }}
+        uses: actions/cache/restore@v4
         with:
           path: ~/.cargo/registry ~/.cargo/git target
           key: ${{ needs.cache-keys.outputs.cargo_key }}-${{ matrix.rust }}
@@ -175,7 +174,7 @@ jobs:
         with:
           username: ${{ secrets.PARITYPR_DOCKERHUB_USERNAME }}
           password: ${{ secrets.PARITYPR_DOCKERHUB_PASSWORD }}
-      - name: Build & Push Multi-Arch Image
+      - name: Build & Push Docker Image
         id: build
         uses: docker/build-push-action@v6
         with:
@@ -251,15 +250,13 @@ jobs:
     if: always()
     steps:
       - uses: actions/download-artifact@v4
-        with:
-          path: ./logs
       - name: Detect persistent failures
         run: |
-          if grep -r "FAIL" ./logs | grep -v attempt-2; then
+          if grep -r "FAIL" . | grep -v attempt-2; then
             echo "Persistent test failures detected"
             exit 1
           else
-            echo "All tests passed (with retries where needed)"
+            echo "All tests passed (with retries)"
 
   canary-deploy:
     runs-on: parity-large
@@ -280,4 +277,5 @@ jobs:
       - name: Pipeline Summary
         run: |
           echo "ETH-RPC Image: ${{ env.ETH_RPC_IMAGE_NAME }}:${{ needs.set-variables.outputs.VERSION }}"
-          echo "Multi-arch build complete, SBOM generated, signed, attested, E2E tests passed"
+          echo "Status: ${{ job.status }}"
+          echo "Multi-arch, SBOM-generated, signed, attested, zero persistent E2E failures"
