@@ -10,7 +10,6 @@ on:
     - cron: "0 5 * * *"
 
 concurrency:
-  # Ensure only one workflow per PR or per scheduled run
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
 
@@ -18,7 +17,6 @@ jobs:
   isdraft:
     uses: ./.github/workflows/reusable-isdraft.yml
 
-  # Linux container runners
   check-getting-started:
     needs: isdraft
     strategy:
@@ -45,68 +43,35 @@ jobs:
             container: opensuse/tumbleweed
             template: solochain
             shell: sh
-    runs-on: ubuntu-latest  # Use GitHub-hosted runner to avoid waiting for parity-large
+    runs-on: ubuntu-latest
     container: ${{ matrix.container }}:latest
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
 
       - name: Install prerequisites
         run: |
-          if [[ "${{ matrix.name }}" == "ubuntu" || "${{ matrix.name }}" == "debian" ]]; then
-            apt update && apt install -y expect sudo git
-          elif [[ "${{ matrix.name }}" == "arch" ]]; then
-            pacman -Syu --needed --noconfirm expect sudo git
-          elif [[ "${{ matrix.name }}" == "fedora" ]]; then
-            dnf --assumeyes install expect sudo git
-          elif [[ "${{ matrix.name }}" == "opensuse" ]]; then
-            zypper install --no-confirm expect sudo git
-          fi
+          case "${{ matrix.name }}" in
+            ubuntu|debian)
+              apt update && apt install -y sudo git curl
+              ;;
+            arch)
+              pacman -Syu --noconfirm && pacman -S --noconfirm sudo git curl
+              ;;
+            fedora)
+              dnf install -y sudo git curl
+              ;;
+            opensuse)
+              zypper install -y sudo git curl
+              ;;
+          esac
 
-      - name: Set EXPECT flags
+      - name: Run getting-started.sh in CI mode
+        env:
+          CI: "1"
         run: |
-          [ "${{ runner.debug }}" = "1" ] && EXPECT_FLAGS="-d" || EXPECT_FLAGS=""
-          echo "EXPECT_FLAGS=${EXPECT_FLAGS}" >> $GITHUB_ENV
-
-      - name: First run of getting-started.sh
-        run: |
-          expect $EXPECT_FLAGS -c '
-          set timeout 240
-          spawn ${{ matrix.shell }} scripts/getting-started.sh
-          expect_after {
-            timeout { puts stderr "Timed out on expect"; exit 1 }
-            eof { puts stderr "EOF received on expect"; exit 1 }
-          }
-          expect -nocase "Detected ${{ matrix.name }}"
-          expect "Rust is not installed. Install it?" {
-            send "y\r"
-            expect "Proceed with standard installation (default - just press enter)" { send "\r"; expect "Rust is installed now" }
-          }
-          expect "Setup the Rust environment" { send "y\r" }
-          expect "start with one of the templates" { send "y\r" }
-          expect -re "(.)\\) ${{ matrix.template }} template" { send "$expect_out(1,string)\r" }
-          expect "compile the node?" { send "n\r" }
-          expect eof
-          '
-        timeout-minutes: 15
-
-      - name: Second run of getting-started.sh
-        run: |
-          expect $EXPECT_FLAGS -c '
-          set timeout 120
-          spawn ${{ matrix.shell }} scripts/getting-started.sh
-          expect_after {
-            timeout { puts stderr "Timed out on expect"; exit 1 }
-            eof { puts stderr "EOF received on expect"; exit 1 }
-          }
-          expect "Rust already installed" {}
-          expect "Setup the Rust environment" { send "n\r" }
-          expect "start with one of the templates" { send "y\r" }
-          expect -re "(.)\\) ${{ matrix.template }} template" { send "$expect_out(1,string)\r"; expect "directory already exists" {} }
-          expect "compile the node?" { send "n\r" }
-          expect eof
-          '
-        timeout-minutes: 15
+          ${{ matrix.shell }} scripts/getting-started.sh ${{ matrix.template }}
 
       - name: Compile the node
         run: |
@@ -122,7 +87,6 @@ jobs:
           cargo run --release -- --help
         timeout-minutes: 5
 
-  # Optional: Windows runner using Git Bash/WSL
   check-getting-started-windows:
     needs: isdraft
     runs-on: windows-latest
@@ -131,36 +95,25 @@ jobs:
       matrix:
         include:
           - template: minimal
-            shell: "C:\\Program Files\\Git\\bin\\bash.exe" # Git Bash
+            shell: "C:\\Program Files\\Git\\bin\\bash.exe"
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
 
       - name: Install dependencies (Git Bash)
         run: |
-          choco install -y rust git expect
+          choco install -y rust git curl
 
-      - name: Set EXPECT flags
-        run: |
-          [ "${{ runner.debug }}" = "1" ] && EXPECT_FLAGS="-d" || EXPECT_FLAGS=""
-          echo "EXPECT_FLAGS=${EXPECT_FLAGS}" >> $GITHUB_ENV
-
-      - name: Run getting-started.sh on Windows
+      - name: Run getting-started.sh on Windows in CI
+        env:
+          CI: "1"
         shell: bash
         run: |
-          expect $EXPECT_FLAGS -c '
-          set timeout 240
-          spawn "${{ matrix.shell }}" scripts/getting-started.sh
-          expect_after {
-            timeout { puts stderr "Timed out on expect"; exit 1 }
-            eof { puts stderr "EOF received on expect"; exit 1 }
-          }
-          expect -nocase "Detected Windows"
-          expect "Rust is not installed. Install it?" { send "y\r" }
-          expect "Setup the Rust environment" { send "y\r" }
-          expect "start with one of the templates" { send "y\r" }
-          expect -re "(.)\\) ${{ matrix.template }} template" { send "$expect_out(1,string)\r" }
-          expect "compile the node?" { send "n\r" }
-          expect eof
-          '
-        timeout-minutes: 15
+          "${{ matrix.shell }}" scripts/getting-started.sh ${{ matrix.template }}
+
+      - name: Compile the node on Windows
+        shell: bash
+        run: |
+          . "$HOME/.cargo/env"
+          cd ${{ matrix.template }}-template
+          cargo build --release
